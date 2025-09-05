@@ -1,288 +1,115 @@
-import os
-import argparse
-from pathlib import Path
-from typing import List, Set
-import mimetypes
+ 🎯 Direct GL Pricing Applications
 
-class ProjectAnalyzer:
-    def __init__(self, root_path: str, output_file: str = "project_analysis.txt"):
-        self.root_path = Path(root_path).resolve()
-        self.output_file = output_file
-        
-        # Common code file extensions
-        self.code_extensions = {
-            '.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c', '.h', 
-            '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt', '.scala',
-            '.html', '.css', '.scss', '.sass', '.sql', '.sh', '.bash',
-            '.yaml', '.yml', '.json', '.xml', '.toml', '.ini', '.cfg',
-            '.md', '.rst', '.txt', '.dockerfile', '.env', '.gitignore',
-            '.ipynb'  # Jupyter notebooks
-        }
-        
-        # Directories to skip
-        self.skip_dirs = {
-            '__pycache__', '.git', '.svn', '.hg', 'node_modules', 
-            '.pytest_cache', '.mypy_cache', '.tox', 'venv', 'env',
-            '.env', '.venv', 'dist', 'build', '.idea', '.vscode',
-            'coverage', '.coverage', 'htmlcov', '.DS_Store',
-            '*.egg-info', '.eggs', 'wheels', '.sass-cache'
-        }
-        
-        # Files to skip
-        self.skip_files = {
-            '.DS_Store', 'Thumbs.db', '*.pyc', '*.pyo', '*.pyd',
-            '*.so', '*.dylib', '*.dll', '*.class', '*.exe'
-        }
-        
-        # Maximum file size (in KB) to include
-        self.max_file_size = 500  # 500KB
-        
-    def should_skip_dir(self, dir_path: Path) -> bool:
-        """Check if directory should be skipped"""
-        dir_name = dir_path.name
-        return any(
-            dir_name == skip or 
-            dir_name.startswith('.') and dir_name != '.' or
-            skip in str(dir_path)
-            for skip in self.skip_dirs
-        )
-    
-    def should_skip_file(self, file_path: Path) -> bool:
-        """Check if file should be skipped"""
-        file_name = file_path.name
-        
-        # Skip if file matches skip patterns
-        if any(skip in file_name for skip in self.skip_files):
-            return True
-            
-        # Skip if file is too large
-        try:
-            if file_path.stat().st_size > self.max_file_size * 1024:
-                return True
-        except:
-            return True
-            
-        # Skip binary files
-        try:
-            mime_type, _ = mimetypes.guess_type(str(file_path))
-            if mime_type and mime_type.startswith(('image/', 'video/', 'audio/', 'application/octet-stream')):
-                return True
-        except:
-            pass
-            
-        return False
-    
-    def is_code_file(self, file_path: Path) -> bool:
-        """Check if file is a code file based on extension"""
-        # Check common code extensions
-        if file_path.suffix.lower() in self.code_extensions:
-            return True
-            
-        # Check files without extensions (like Dockerfile, Makefile)
-        if file_path.name in ['Dockerfile', 'Makefile', 'Rakefile', 'Gemfile', 'Pipfile']:
-            return True
-            
-        return False
-    
-    def generate_tree_structure(self, path: Path, prefix: str = "", is_last: bool = True) -> List[str]:
-        """Generate tree structure similar to 'tree' command"""
-        lines = []
-        
-        if path == self.root_path:
-            lines.append(f"📁 {path.name}/")
-        else:
-            connector = "└── " if is_last else "├── "
-            if path.is_dir():
-                lines.append(f"{prefix}{connector}📁 {path.name}/")
-            else:
-                icon = "📄" if self.is_code_file(path) else "📋"
-                lines.append(f"{prefix}{connector}{icon} {path.name}")
-        
-        if path.is_dir() and not self.should_skip_dir(path):
-            try:
-                items = sorted(list(path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
-                
-                for i, item in enumerate(items):
-                    if item.is_dir() and self.should_skip_dir(item):
-                        continue
-                    if item.is_file() and self.should_skip_file(item):
-                        continue
-                        
-                    is_last_item = i == len(items) - 1
-                    extension = "    " if is_last else "│   "
-                    
-                    if path == self.root_path:
-                        lines.extend(self.generate_tree_structure(item, "", is_last_item))
-                    else:
-                        lines.extend(self.generate_tree_structure(item, prefix + extension, is_last_item))
-            except PermissionError:
-                pass
-                
-        return lines
-    
-    def read_file_content(self, file_path: Path) -> str:
-        """Read file content with error handling"""
-        try:
-            # Try reading as text
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except UnicodeDecodeError:
-            try:
-                # Try with latin-1 encoding
-                with open(file_path, 'r', encoding='latin-1') as f:
-                    return f.read()
-            except:
-                return f"[Error: Unable to read file - possibly binary or encoding issue]"
-        except Exception as e:
-            return f"[Error reading file: {str(e)}]"
-    
-    def analyze_project(self, include_all_files: bool = False):
-        """Main method to analyze the project"""
-        output_lines = []
-        
-        # Header
-        output_lines.append("=" * 80)
-        output_lines.append(f"PROJECT ANALYSIS: {self.root_path.name}")
-        output_lines.append("=" * 80)
-        output_lines.append("")
-        
-        # Project structure
-        output_lines.append("## PROJECT STRUCTURE")
-        output_lines.append("-" * 40)
-        tree_lines = self.generate_tree_structure(self.root_path)
-        output_lines.extend(tree_lines)
-        output_lines.append("")
-        
-        # File contents
-        output_lines.append("## FILE CONTENTS")
-        output_lines.append("-" * 40)
-        
-        file_count = 0
-        total_lines = 0
-        
-        for root, dirs, files in os.walk(self.root_path):
-            root_path = Path(root)
-            
-            # Skip directories
-            dirs[:] = [d for d in dirs if not self.should_skip_dir(root_path / d)]
-            
-            for file in sorted(files):
-                file_path = root_path / file
-                
-                if self.should_skip_file(file_path):
-                    continue
-                    
-                if not include_all_files and not self.is_code_file(file_path):
-                    continue
-                
-                relative_path = file_path.relative_to(self.root_path)
-                
-                output_lines.append("")
-                output_lines.append("=" * 60)
-                output_lines.append(f"FILE: {relative_path}")
-                output_lines.append("=" * 60)
-                
-                content = self.read_file_content(file_path)
-                output_lines.append(content)
-                
-                file_count += 1
-                total_lines += len(content.splitlines())
-                
-                # Add separator
-                output_lines.append("")
-                output_lines.append("~" * 60)
-        
-        # Summary statistics
-        output_lines.append("")
-        output_lines.append("=" * 80)
-        output_lines.append("## SUMMARY")
-        output_lines.append("-" * 40)
-        output_lines.append(f"Total files analyzed: {file_count}")
-        output_lines.append(f"Total lines of code: {total_lines}")
-        output_lines.append(f"Output saved to: {self.output_file}")
-        output_lines.append("=" * 80)
-        
-        # Write to file
-        with open(self.output_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(output_lines))
-        
-        # Also print summary to console
-        print(f"\n✅ Project analysis complete!")
-        print(f"📄 Files analyzed: {file_count}")
-        print(f"📝 Total lines: {total_lines}")
-        print(f"💾 Output saved to: {self.output_file}")
-        print(f"\n📋 You can now copy the contents of '{self.output_file}' to your AI chatbox.")
-        
-        # Check if output is very large
-        output_size = os.path.getsize(self.output_file) / 1024  # Size in KB
-        if output_size > 100:
-            print(f"\n⚠️  Warning: Output file is {output_size:.1f}KB. You may need to split it into chunks for the chatbox.")
-            self.create_chunked_files(output_lines)
-    
-    def create_chunked_files(self, lines: List[str], chunk_size: int = 5000):
-        """Create chunked files if output is too large"""
-        print("\n📂 Creating chunked files...")
-        
-        chunks = []
-        current_chunk = []
-        current_size = 0
-        
-        for line in lines:
-            current_chunk.append(line)
-            current_size += 1
-            
-            if current_size >= chunk_size:
-                chunks.append(current_chunk)
-                current_chunk = []
-                current_size = 0
-        
-        if current_chunk:
-            chunks.append(current_chunk)
-        
-        # Write chunks
-        base_name = self.output_file.replace('.txt', '')
-        for i, chunk in enumerate(chunks, 1):
-            chunk_file = f"{base_name}_part{i}.txt"
-            with open(chunk_file, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(chunk))
-            print(f"  ✅ Created: {chunk_file}")
+  1. Industry Risk Segmentation & Classification
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Extract project code and structure for AI analysis"
-    )
-    parser.add_argument(
-        "path", 
-        nargs="?", 
-        default=".", 
-        help="Path to project directory (default: current directory)"
-    )
-    parser.add_argument(
-        "-o", "--output",
-        default="project_analysis.txt",
-        help="Output file name (default: project_analysis.txt)"
-    )
-    parser.add_argument(
-        "-a", "--all",
-        action="store_true",
-        help="Include all text files, not just code files"
-    )
-    parser.add_argument(
-        "--max-size",
-        type=int,
-        default=500,
-        help="Maximum file size in KB to include (default: 500)"
-    )
-    
-    args = parser.parse_args()
-    
-    # Create analyzer
-    analyzer = ProjectAnalyzer(args.path, args.output)
-    analyzer.max_file_size = args.max_size
-    
-    # Run analysis
-    print(f"🔍 Analyzing project: {os.path.abspath(args.path)}")
-    analyzer.analyze_project(include_all_files=args.all)
+  - NAICS-Based Risk Tiers: Use the 103 industries to create detailed risk classification tiers
+  - Granular Pricing: Move beyond broad categories to specific 4-digit/5-digit NAICS codes
+  - Cross-Industry Benchmarking: Compare similar industries (e.g., different manufacturing subsectors)
 
-if __name__ == "__main__":
-    main()
+  2. Exposure Base Development
+
+  Premium = Rate × Exposure Base × Modification Factors
+  Your data provides multiple exposure bases:
+  - Payroll-based: Use employer counts and employment size data
+  - Revenue-based: Leverage financial performance quartiles
+  - Per-location: Use establishment counts by province
+
+  3. Geographic Risk Assessment
+
+  - Provincial Risk Differentials: Analyze claim frequencies by province using business density
+  - Urban vs Rural: Compare metropolitan vs smaller provinces
+  - Economic Concentration Risk: Identify provinces heavily dependent on high-risk industries
+
+  🔬 Advanced Analytical Approaches
+
+  4. Business Size-Based Pricing Models
+
+  # Risk often varies by business size
+  Small Business (5-99 employees): Different GL exposure than
+  Large Enterprise (500+ employees): Different risk profile
+  - Size-Adjusted Rates: Micro/Small/Medium/Large business rate differentials
+  - Scale Economics: Larger businesses may have better safety programs
+  - Claims Severity: Small businesses may have less legal resources
+
+  5. Financial Stability Indicators
+
+  From your performance data:
+  - Revenue Volatility: Industries with unstable revenue = higher GL risk
+  - Profitability: Low-margin industries may cut safety spending
+  - Quartile Analysis: Target profitable businesses (top quartile) with better rates
+
+  6. Market Penetration Analysis
+
+  Market Share Opportunity = Total Businesses - Current Insured
+  - Underserved Markets: Identify industries/provinces with high business counts but low insurance penetration
+  - Growth Opportunities: Focus on expanding industries (high employer growth)
+
+  📊 Specific Research Methodologies
+
+  7. Composite Risk Scoring
+
+  Create weighted risk scores combining:
+  Risk Score = (Industry Hazard Weight × 0.4) +
+               (Business Size Factor × 0.3) +
+               (Geographic Factor × 0.2) +
+               (Financial Stability × 0.1)
+
+  8. Predictive Loss Modeling
+
+  Use your data as independent variables:
+  - Business Density: Higher density = more third-party interactions
+  - Industry Mix: Provinces with high-risk industry concentrations
+  - Economic Indicators: Revenue growth as proxy for business activity
+
+  9. Portfolio Optimization
+
+  - Diversification Analysis: Ensure balanced exposure across industries/regions
+  - Concentration Limits: Set maximum exposure limits by NAICS code
+  - Rate Adequacy: Industries below profitability targets need rate increases
+
+  🎯 Competitive Intelligence Applications
+
+  10. Market Size Estimation
+
+  Total Addressable Market = Σ(Industry Businesses × Average Premium)
+  - Premium Pool Calculation: Estimate total GL premiums by industry
+  - Market Share Targets: Set realistic penetration goals
+  - Competitive Positioning: Identify underserved niches
+
+  11. Distribution Strategy
+
+  - Agent/Broker Focus: Target provinces/industries with highest business concentrations
+  - Digital vs Traditional: Small businesses (micro category) may prefer online
+  - Industry-Specific Programs: Develop specialized programs for large industries
+
+  📈 Enhanced Data Integration Ideas
+
+  12. External Data Enhancement
+
+  Combine your data with:
+  - Claims Data: Map actual losses to industry/size/geography
+  - Economic Data: GDP, employment trends, business formations
+  - Regulatory Data: Workers' comp rates, safety regulations by province
+
+  13. Dynamic Pricing Models
+
+  - Real-Time Updates: Monitor business formation/closure trends
+  - Economic Cycles: Adjust pricing based on industry performance quartiles
+  - Seasonal Adjustments: Industries with seasonal employment patterns
+
+  🔍 Specific Research Questions Your Data Can Answer
+
+  1. "Which 4-digit NAICS codes have the highest business density but lowest current GL penetration?"
+  2. "How does GL claim frequency correlate with business size within each industry?"
+  3. "Which provinces show the strongest growth in high-risk industries?"
+  4. "What's the optimal rate differential between micro and large businesses in construction?"
+  5. "Which professional services subcategories justify specialized GL programs?"
+
+⏺ 🚀 Immediate Next Steps for Your GL Pricing Study
+
+  High-Impact Quick Wins:
+
+  1. Create Industry Risk Heat Map: Map your 103 industries by business count vs profitability
+  2. Size-Based Rate Analysis: Compare micro vs large business concentrations by industry
+  3. Provincial Opportunity Matrix: Identify underserved high-business-count provinces
+  4. Competitive Gap Analysis: Find industries with high business counts but potentially low GL penetration
